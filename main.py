@@ -4,6 +4,7 @@ from world_grid import *
 from camera import *
 from player import *
 from colors import *
+from profiler import Profiler
 
 SCREEN_WIDTH = 1080
 SCREEN_HEIGHT = 720
@@ -68,6 +69,8 @@ class Game:
         self.to_remove_particles = []
         self.running = True
 
+        self.profiler = Profiler(window=60)
+
     def init_pygame(self):
         pygame.init()
         screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -82,6 +85,11 @@ class Game:
         for event in events:
             if event.type == pygame.QUIT:
                 self.running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F3:
+                    self.profiler.overlay = not self.profiler.overlay  # toggle overlay
+                elif event.key == pygame.K_F4:
+                    self.profiler.request_deep_profile()
 
         # camera inputs
         self.camera.handle_input(events, keys)
@@ -233,23 +241,18 @@ class Game:
         self.screen.blit(label, label_rect)
 
     def render(self):
-        self.screen.fill(BLACK)
-        self.draw_game_world()
+        with self.profiler.section("render_world"):
+            self.draw_game_world()
+        with self.profiler.section("render_ui"):
+            self.draw_stat_box()
+            self.draw_mut_box()
+            self.create_box_label("Game World", (SCREEN_WIDTH / 2 - 16, 55))
+            self.create_box_label("Player Stats", ((SCREEN_WIDTH + WORLD_WINDOW_WIDTH + STAT_BOX_W) // 2 - 15, 55))
+            self.create_box_label("Mutations", ((SCREEN_WIDTH + WORLD_WINDOW_WIDTH + STAT_BOX_W) // 2 - 10, 375))
 
-        self.draw_stat_box()
-        self.draw_mut_box()
-        # self.draw_species_box()
-
-        # TEXT FOR WORLD BOX
-        self.create_box_label("Game World", (SCREEN_WIDTH / 2 - 16, 55))
-
-        # TEXT FOR STAT BOX
-        self.create_box_label("Player Stats", ((SCREEN_WIDTH + WORLD_WINDOW_WIDTH + STAT_BOX_W) // 2 - 15, 55))
-
-        self.create_box_label("Mutations", ((SCREEN_WIDTH + WORLD_WINDOW_WIDTH + STAT_BOX_W) // 2 - 10, 375))
+        self.profiler.draw_overlay(self.screen, self.font, topleft=(8, 8))  # overlay on top
 
         pygame.display.flip()
-
         self.clock.tick(60)
 
     def kill_cell(self, cell):
@@ -277,97 +280,93 @@ class Game:
     def update(self):
         dt = 1 / 60
 
-        # physics
-        self.space.step(dt)
-        if self.camera.type == 1:
-            self.camera.update(width=WORLD_WINDOW_WIDTH, height=WORLD_WINDOW_HEIGHT)
+        with self.profiler.section("physics"):
+            self.space.step(dt)
+            if self.camera.type == 1:
+                self.camera.update(width=WORLD_WINDOW_WIDTH, height=WORLD_WINDOW_HEIGHT)
 
-        # particle respawn in loaded chunks
-        self.respawn_particles(dt)
+        with self.profiler.section("respawn"):
+            self.respawn_particles(dt)
 
-        # newly split cells are collected here and appended after the loop,
-        # dead cells are removed after the loop — never mutate self.cells
-        # while iterating it
-        new_cells = []
-        dead_cells = []
+        with self.profiler.section("sim_loop"):
+            new_cells = []
+            dead_cells = []
+            for cell in self.cells:
+                self.world.update_entity(cell)
 
-        for cell in self.cells:
-            self.world.update_entity(cell, dt)
+                # EnvFeatures is only consumed by split() and photosynthesis, so
+                # build it lazily instead of once per cell per frame. (Phase 1 opt)
+                will_split = cell.mass >= cell.max_mass and cell.energy >= cell.max_energy
+                env = None
+                if will_split or cell.has_chloroplast:
+                    env = self.world.get_env_features(cell.body.position)
 
-            # one environment snapshot per cell per frame
-            env = self.world.get_env_features(cell.body.position)
+                # player cell functions
+                if cell.is_player:
+                    self.player.cell = cell
+                    self.world.process(cell.body.position, self.space)
+                    self.camera.update(cell.body, WORLD_WINDOW_WIDTH, WORLD_WINDOW_HEIGHT)
 
-            # player cell functions
-            if cell.is_player:
-                # update self.player
-                self.player.cell = cell
-                # load chunks
-                self.world.process(cell.body.position, self.space)
-                # camera
-                self.camera.update(cell.body, WORLD_WINDOW_WIDTH, WORLD_WINDOW_HEIGHT)
+                # cell reproduction (children spawn into new_cells)
+                if will_split:
+                    cell.split(self.space, new_cells, env)
 
-            # cell reproduction (children spawn into new_cells)
-            if cell.mass >= cell.max_mass and cell.energy >= cell.max_energy:
-                cell.split(self.space, new_cells, env)
+                # gain energy: eat nearby particles
+                for particle in list(cell.nearby_particles):
+                    cell.consume_particle(particle, self.to_remove_particles)
 
-            # gain energy: eat nearby particles (iterate a snapshot,
-            # consume_particle removes from the live list)
-            for particle in list(cell.nearby_particles):
-                cell.consume_particle(particle, self.to_remove_particles)
+                # gain energy: photosynthesis
+                if cell.has_chloroplast and env is not None and env.in_water:
+                    rates = PHOTOSYNTHESIS_RATES.get(cell.color, {})
+                    cell.add_energy(rates.get(env.light_level, 0))
 
-            # gain energy: photosynthesis
-            if cell.has_chloroplast and env.in_water:
-                rates = PHOTOSYNTHESIS_RATES.get(cell.color, {})
-                cell.add_energy(rates.get(env.light_level, 0))
+                # death by starvation
+                if cell.energy <= 0:
+                    cell.is_dead = True
 
-            # death by starvation
-            if cell.energy <= 0:
-                cell.is_dead = True
+                # death by contact
+                for other in cell.contact_time:
+                    cell.contact_time[other] += dt
+                    if cell.contact_time[other] >= 1:
+                        other.is_dead = True
 
-            # death by contact
-            for other in cell.contact_time:
-                cell.contact_time[other] += dt
-                if cell.contact_time[other] >= 1:
-                    other.is_dead = True
+                # death by consumption
+                for entity in cell.nearby_entities:
+                    cell.consume_cell(entity)
 
-            # death by consumption
-            for entity in cell.nearby_entities:
-                cell.consume_cell(entity)
+                if cell.is_dead:
+                    dead_cells.append(cell)
 
-            if cell.is_dead:
-                dead_cells.append(cell)
+            # apply deferred list changes
+            self.cells.extend(new_cells)
 
-        # apply deferred list changes
-        self.cells.extend(new_cells)
-        for cell in dead_cells:
-            if cell in self.cells:
-                self.kill_cell(cell)
+        with self.profiler.section("deaths"):
+            for cell in dead_cells:
+                if cell in self.cells:
+                    self.kill_cell(cell)
 
-        # mutation UI tracking (player genome may have changed via split)
-        self.check_mutations()
+        with self.profiler.section("post"):
+            self.check_mutations()
+            for particle in self.to_remove_particles:
+                gx, gy = particle.x // CELL_SIZE, particle.y // CELL_SIZE
+                cell = self.world.get_lvl1_chunk_local_cell((gx, gy))
 
-        # cleanup consumed particles
-        for particle in self.to_remove_particles:
-            gx, gy = particle.x // CELL_SIZE, particle.y // CELL_SIZE
-            cell = self.world.get_lvl1_chunk_local_cell((gx, gy))
+                if cell is not None and hasattr(cell, "particles") and particle in cell.particles:
+                    cell.particles.remove(particle)
 
-            if cell is not None and hasattr(cell, "particles") and particle in cell.particles:
-                cell.particles.remove(particle)
-
-        self.to_remove_particles.clear()
+            self.to_remove_particles.clear()
 
     def main_game_loop(self):
         while self.running:
             self.handle_inputs()
-            self.update()
+            self.profiler.maybe_deep_profile(self.update)  # was: self.update()
             self.render()
+            self.profiler.frame()  # <-- once per frame
 
             if len(self.cells) != self.previous_cell_length:
                 print("Amount of cells:", len(self.cells))
                 self.previous_cell_length = len(self.cells)
-
         pygame.quit()
-
 
 if __name__ == "__main__":
     game = Game()
