@@ -21,7 +21,7 @@ class Genome:
 
         self.efficiency_factor = efficiency_factor
 
-        self.mutation_rate = 0.1
+        self.mutation_rate = 0.25
 
         # visual traits
         self.color = (255, 255, 255)
@@ -35,16 +35,43 @@ class Genome:
         self.mass_range = [10, 80]
         # max_speed 20 -> 240
         self.speed_range = [20, 240]
+        # max_size 5 -> 40
+        self.size_range = [5,40]
 
     def mutate_gene(self, env: EnvFeatures, cell):
         """Mutate this genome based on the environment (env) and the parent
         cell's lifetime state (movement history, diet)."""
 
-        # mutate mass
-        if random.random() < self.mutation_rate:
-            self.max_mass += random.choice([-2, 2, 4, 6, 8])
-            self.max_mass = max(self.mass_range[0], min(self.max_mass, self.mass_range[1]))
-            self.size = self.max_mass // 2
+        # mutate size: size increases in less material dense areas, and decreases in more material dense areas
+        if env.chunk_material == 1:
+            if random.random() < self.mutation_rate:
+                # self.size += random.choice([1, 2, 3, 4])
+                # self.size = max(self.size_range[0], min(self.size, self.size_range[1]))
+                self.max_mass += random.choice([2, 4, 6, 8])
+                self.max_mass = max(self.mass_range[0], min(self.max_mass, self.mass_range[1]))
+                self.size = self.max_mass//2
+
+        if env.chunk_material == 2:
+            if random.random() < self.mutation_rate:
+                # self.size -= random.choice([1, 2, 3, 4])
+                # self.size = max(self.size_range[0], min(self.size, self.size_range[1]))
+                self.max_mass -= random.choice([2, 4, 6, 8])
+                self.max_mass = max(self.mass_range[0], min(self.max_mass, self.mass_range[1]))
+                self.size = self.max_mass//2
+
+        # TODO: Add less particles to less nutrient dense areas, so cells can still eat and mutate within them
+        #  For now lets just leave mass and size coupled
+        # mutate mass: mass decreases in less nutrient dense areas, and increases in more nutrient dense areas.
+        # if env.has_particles:
+        #     if random.random() < self.mutation_rate:
+        #         self.max_mass += random.choice([2, 4, 6, 8])
+        #         self.max_mass = max(self.mass_range[0], min(self.max_mass, self.mass_range[1]))
+        #
+        #
+        # if not env.has_particles:
+        #     if random.random() < self.mutation_rate:
+        #         self.max_mass -= random.choice([2, 4, 6, 8])
+        #         self.max_mass = max(self.mass_range[0], min(self.max_mass, self.mass_range[1]))
 
         # mutate speed: each type-1 particle eaten is a chance at more speed
         for _ in range(cell.amt_type1_particles):
