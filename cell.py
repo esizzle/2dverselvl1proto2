@@ -10,10 +10,11 @@ from colors import GREEN, BLACK, LIME, ORANGE, RED
 from env_features import EnvFeatures
 from physics_object import *
 from world_grid import WaterCell, Particle
+from decision_models import create_decision_model
 
 
 class Genome:
-    def __init__(self, max_mass=20, acceleration=40, max_speed=40, efficiency_factor=1):
+    def __init__(self, max_mass=20, acceleration=40, max_speed=40, efficiency_factor=1, intelligence = -1):
         self.acceleration = acceleration
         self.max_speed = max_speed
         self.max_mass = max_mass
@@ -37,6 +38,16 @@ class Genome:
         self.speed_range = [20, 240]
         # max_size 5 -> 40
         self.size_range = [5,40]
+
+        # intelligence: which decision model this organism uses (0 = random
+        # walk). Emerges under scarcity in mutate_gene, not handed out for free.
+        self.intelligence = intelligence
+        self.intelligence_range = [-1, 4]  # 3 == Level 3A, 4 == Level 3B
+
+        # social genes (only consulted once the matching model is unlocked)
+        self.cell_attraction = 0.0  # 3A: single toward/away, [-1, 1]
+        self.smaller_cell_attraction = 0.0  # 3B: response to smaller cells
+        self.larger_cell_attraction = 0.0  # 3B: response to larger cells
 
     def mutate_gene(self, env: EnvFeatures, cell):
         """Mutate this genome based on the environment (env) and the parent
@@ -108,6 +119,33 @@ class Genome:
                 if random.random() < self.mutation_rate:
                     self.color = RED
 
+        # mutate intelligence: perception is costly, so it only pays off -- and
+        # only evolves -- where food is scarce. Rich water keeps cells at Level 0.
+        # level 0 intelligence: if in water and high nutrients --> level 0 intelligence (random movement)
+        if env.chunk_material == 1 and env.has_particles:
+        #if random.random() < self.mutation_rate:
+            self.intelligence = max(0, self.intelligence)
+        # level 1 intelligence: if in sand and high nutrients --> level 1 intelligence (terrain awareness)
+        if env.chunk_material == 2 and env.has_particles:
+        #if random.random() < self.mutation_rate:
+            self.intelligence = max(1, self.intelligence)
+        # if not env.has_particles:
+        #     if random.random() < self.mutation_rate:
+        #         self.intelligence = min(self.intelligence + 1, self.intelligence_range[1])
+        # elif random.random() < self.mutation_rate * 0.5:
+        #     self.intelligence = max(self.intelligence - 1, self.intelligence_range[0])
+        #
+        # # drift the social genes so 3A/3B behaviours can emerge once unlocked
+        # if random.random() < self.mutation_rate:
+        #     self.cell_attraction = max(-1.0, min(self.cell_attraction + random.uniform(-0.3, 0.3), 1.0))
+        # if random.random() < self.mutation_rate:
+        #     self.smaller_cell_attraction = max(-1.0,
+        #                                        min(self.smaller_cell_attraction + random.uniform(-0.3, 0.3),
+        #                                            1.0))
+        # if random.random() < self.mutation_rate:
+        #     self.larger_cell_attraction = max(-1.0,
+        #                                       min(self.larger_cell_attraction + random.uniform(-0.3, 0.3), 1.0))
+
 
 class Cell:
     def __init__(self, position: tuple, genome: Genome, is_player=False):
@@ -124,6 +162,7 @@ class Cell:
         self.color = genome.color
 
         self.genome = genome
+        self.decision_model = create_decision_model(genome)
 
         # world tracking
         self.last_chunk_pos = None
@@ -165,7 +204,7 @@ class Cell:
         self.energy = min(self.energy + amount, self.max_energy)
 
     def _movement_cost(self):
-        return self.mass * self.acceleration * self.efficiency_factor
+        return self.mass * self.acceleration * self.efficiency_factor * 1/60
 
     # ------------------------------------------------------------------
     # Input
@@ -215,6 +254,27 @@ class Cell:
 
         if keys[pygame.K_k]:
             self.is_dead = True
+
+    def apply_movement(self, direction):
+        """Act on a desired direction from this cell's decision model. AI cells
+        call this; the player never does (player uses handle_input). Same rules
+        as manual movement: a cell wall forbids it, and moving costs energy and
+        sets has_moved, so mutation rules stay identical for AI and player."""
+        if self.has_cell_wall:
+            return
+        dx, dy = direction
+        if dx == 0 and dy == 0:
+            return
+        vx = self.body.velocity.x + dx * self.acceleration
+        vy = self.body.velocity.y + dy * self.acceleration
+        speed = math.hypot(vx, vy)
+        if speed > self.max_speed:
+            scale = self.max_speed / speed
+            vx *= scale
+            vy *= scale
+        self.body.velocity = (vx, vy)
+        self.add_energy(-self._movement_cost())
+        self.has_moved = True
 
     # ------------------------------------------------------------------
     # World queries

@@ -306,6 +306,10 @@ class Game:
                     self.player.cell = cell
                     self.world.process(cell.body.position, self.space)
                     self.camera.update(cell.body, WORLD_WINDOW_WIDTH, WORLD_WINDOW_HEIGHT)
+                else:
+                    if cell.genome.intelligence >= 0:
+                        direction = cell.decision_model.decide(cell, self.world)
+                        cell.apply_movement(direction)
 
                 # cell reproduction (children spawn into new_cells)
                 if will_split:
