@@ -30,7 +30,7 @@ import random
 
 from pymunk import Vec2d
 
-from world_grid import SandCell
+from world_grid import SandCell, WaterCell
 
 
 # ----------------------------------------------------------------------
@@ -62,7 +62,6 @@ def _neighbor_terrain(organism, world):
             if cell is not None:
                 yield Vec2d(dx, dy), cell
 
-
 def _terrain_steer(organism, world):
     """A push away from solid terrain (sand). May be zero. Shared by every model
     from Level 1 up, so terrain awareness is never re-derived per level."""
@@ -72,6 +71,30 @@ def _terrain_steer(organism, world):
             steer -= offset  # move opposite the sand
     return steer
 
+def _particle_steer(organism, world):
+    """Returns a steering vector toward the closest nearby particle."""
+
+    if not organism.nearby_particles:
+        return Vec2d.zero()
+
+    pos = organism.body.position
+
+    closest_particle = None
+    closest_dist_sq = float("inf")
+
+    for particle in organism.nearby_particles:
+        dx = particle.x - pos.x
+        dy = particle.y - pos.y
+        dist_sq = dx * dx + dy * dy
+
+        if dist_sq < closest_dist_sq:
+            closest_dist_sq = dist_sq
+            closest_particle = particle
+
+    return Vec2d(
+        closest_particle.x - pos.x,
+        closest_particle.y - pos.y
+    )
 
 def _perceived_cells(organism):
     """Other organisms this organism can currently perceive. Populated by
@@ -136,8 +159,18 @@ class TerrainDecisionModel(DecisionModel):
             self._wander = _random_unit()
         steer = _terrain_steer(organism, world)
         # avoidance dominates when terrain is close, otherwise the wander shows
-        return _safe_normalize(steer * 2.0 + self._wander)/2
+        return _safe_normalize(steer * organism.terrain_avoidance + self._wander)
 
+class NutrientDecisionModel(TerrainDecisionModel):
+    name = "nutrient"
+
+    def __init__(self):
+        super().__init__()
+
+    def decide(self, organism, world):
+        base = super().decide(organism, world)  # terrain/wander
+        p_steer = _particle_steer(organism, world)
+        return _safe_normalize(base + p_steer)
 
 class CellAwareDecisionModel(TerrainDecisionModel):
     """Level 2 -- everything Level 1 does, and it *perceives* nearby organisms.
@@ -198,7 +231,8 @@ class SizeAwareDecisionModel(CellAwareDecisionModel):
 _MODELS_BY_LEVEL = {
     0: RandomDecisionModel,
     1: TerrainDecisionModel,
-    2: CellAwareDecisionModel,
+    2: NutrientDecisionModel,
+    #2: CellAwareDecisionModel,
     3: AttractionDecisionModel,   # 3A
     4: SizeAwareDecisionModel,    # 3B
 }

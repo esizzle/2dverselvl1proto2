@@ -14,7 +14,7 @@ from decision_models import create_decision_model
 
 
 class Genome:
-    def __init__(self, max_mass=20, acceleration=40, max_speed=40, efficiency_factor=1, intelligence = -1):
+    def __init__(self, max_mass=20, acceleration=40, max_speed=40, efficiency_factor=1, intelligence = -1, terrain_avoidance = 0.1):
         self.acceleration = acceleration
         self.max_speed = max_speed
         self.max_mass = max_mass
@@ -42,6 +42,8 @@ class Genome:
         # intelligence: which decision model this organism uses (0 = random
         # walk). Emerges under scarcity in mutate_gene, not handed out for free.
         self.intelligence = intelligence
+        # level 1 intelligence features
+        self.terrain_avoidance = terrain_avoidance
         self.intelligence_range = [-1, 4]  # 3 == Level 3A, 4 == Level 3B
 
         # social genes (only consulted once the matching model is unlocked)
@@ -123,12 +125,22 @@ class Genome:
         # only evolves -- where food is scarce. Rich water keeps cells at Level 0.
         # level 0 intelligence: if in water and high nutrients --> level 0 intelligence (random movement)
         if env.chunk_material == 1 and env.has_particles:
-        #if random.random() < self.mutation_rate:
-            self.intelligence = max(0, self.intelligence)
+            if random.random() < self.mutation_rate:
+                self.intelligence = max(0, self.intelligence)
         # level 1 intelligence: if in sand and high nutrients --> level 1 intelligence (terrain awareness)
         if env.chunk_material == 2 and env.has_particles:
-        #if random.random() < self.mutation_rate:
-            self.intelligence = max(1, self.intelligence)
+            if random.random() < self.mutation_rate:
+                self.intelligence = max(1, self.intelligence)
+
+        if self.intelligence >= 1:
+            if random.random() < self.mutation_rate:
+                self.terrain_avoidance += random.uniform(-0.5,0.5)
+
+        # level 2 intelligence: nutrient awareness
+        if not env.has_particles:
+            if random.random() < self.mutation_rate:
+                self.intelligence = max(2, self.intelligence)
+
         # if not env.has_particles:
         #     if random.random() < self.mutation_rate:
         #         self.intelligence = min(self.intelligence + 1, self.intelligence_range[1])
