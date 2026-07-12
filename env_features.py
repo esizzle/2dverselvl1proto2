@@ -6,6 +6,7 @@ from dataclasses import dataclass
 MATERIAL_AIR = 0
 MATERIAL_WATER = 1
 MATERIAL_SAND = 2
+MATERIAL_BASALT = 3
 
 
 @dataclass(frozen=True)

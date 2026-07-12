@@ -125,9 +125,9 @@ class Genome:
         # only evolves -- where food is scarce. Rich water keeps cells at Level 0.
         # level 0 intelligence: if in water and high nutrients --> level 0 intelligence (random movement)
         if env.chunk_material == 1 and env.has_particles:
-            if random.random() < self.mutation_rate:
+            # decrease chance of first form of intelligence evolving
+            if random.random() < self.mutation_rate/2:
                 self.intelligence = max(0, self.intelligence)
-        # level 1 intelligence: if in sand and high nutrients --> level 1 intelligence (terrain awareness)
         if env.chunk_material == 2 and env.has_particles:
             if random.random() < self.mutation_rate:
                 self.intelligence = max(1, self.intelligence)
@@ -140,6 +140,22 @@ class Genome:
         if not env.has_particles:
             if random.random() < self.mutation_rate:
                 self.intelligence = max(2, self.intelligence)
+
+        # level 3 intelligence: cell awareness
+        if cell.amt_type1_particles > 0:
+            if random.random() < self.mutation_rate:
+                self.intelligence = max(3, self.intelligence)
+
+        if self.intelligence == 3:
+            choice = random.uniform(0.1, 0.2)
+            if cell.amt_type1_particles > 0:
+                for i in range(cell.amt_type1_particles):
+                    if random.random() < self.mutation_rate:
+                        self.cell_attraction = max(self.cell_attraction + choice, 1)
+            else:
+                if random.random() < self.mutation_rate:
+                    self.cell_attraction = max(-1, self.cell_attraction - choice)
+
 
         # if not env.has_particles:
         #     if random.random() < self.mutation_rate:
@@ -158,6 +174,8 @@ class Genome:
         #     self.larger_cell_attraction = max(-1.0,
         #                                       min(self.larger_cell_attraction + random.uniform(-0.3, 0.3), 1.0))
 
+        # Behavioral Mutation: Sticky Cell: Lock onto cell if you try to eat it.
+
 
 class Cell:
     def __init__(self, position: tuple, genome: Genome, is_player=False):
@@ -175,6 +193,14 @@ class Cell:
 
         self.genome = genome
         self.decision_model = create_decision_model(genome)
+        if self.genome.intelligence == 0:
+            self.max_energy += 5000
+        elif self.genome.intelligence == 1:
+            self.max_energy += 50000
+        elif self.genome.intelligence == 2:
+            self.max_energy += 500000
+        elif self.genome.intelligence == 3:
+            self.max_energy += 5000000
 
         # world tracking
         self.last_chunk_pos = None
@@ -205,6 +231,7 @@ class Cell:
         # object tracking
         self.id = uuid.uuid4()
         self.contact_time = {}
+        self.total_contact_time = 0
 
     # ------------------------------------------------------------------
     # Energy
@@ -216,7 +243,7 @@ class Cell:
         self.energy = min(self.energy + amount, self.max_energy)
 
     def _movement_cost(self):
-        return self.mass * self.acceleration * self.efficiency_factor * 1/60
+        return (self.mass * self.acceleration * self.efficiency_factor + self.genome.intelligence*100) * 1/60
 
     # ------------------------------------------------------------------
     # Input

@@ -331,6 +331,7 @@ class Game:
                 # death by contact
                 for other in cell.contact_time:
                     cell.contact_time[other] += dt
+                    cell.total_contact_time += dt
                     if cell.contact_time[other] >= 1:
                         other.is_dead = True
 
