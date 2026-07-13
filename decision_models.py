@@ -159,7 +159,7 @@ class TerrainDecisionModel(DecisionModel):
             self._wander = _random_unit()
         steer = _terrain_steer(organism, world)
         # avoidance dominates when terrain is close, otherwise the wander shows
-        return _safe_normalize(steer * organism.terrain_avoidance + self._wander)
+        return _safe_normalize(steer * organism.genome.terrain_avoidance + self._wander)
 
 class NutrientDecisionModel(TerrainDecisionModel):
     name = "nutrient"
